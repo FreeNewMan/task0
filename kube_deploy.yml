@@ -1,0 +1,70 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testapp-deployment
+  labels:
+    app: testapp
+spec:
+  #replicas: 5 Количестов реплик регулируется HPA (автомасштабироване в зивисомости от нагрущки) подом (манифест ниже)
+  selector:
+    matchLabels:
+      app: testapp
+  template:
+    metadata:
+      labels:
+        app: testapp
+    spec:
+      affinity:
+        nodeAffinity:    
+          preferredDuringSchedulingIgnoredDuringExecution: #по возможности размещать pod-ы по требованиям affinity. Если поды не влезли – scheduler разместит их “как получится”
+            nodeSelectorTerms:
+            - matchExpressions:            
+              - key: zone-name   #Ищем ноды у которых есть метка принадлежности к какой-то зоне
+                operator: In
+                values: #Значения меток (именования зон) Возмжно это лишнее, т.к. для выбора нод для распредления, достаточно наличие самоей метки.
+                - zone1
+                - zone2
+                - zone3
+      containers:
+      - image: nginx:1.14.2
+        name: testapp
+        resources:
+          requests: #ресурсы для одного пода в рабочем режиме
+            cpu: "0.1"
+            memory: "128Mi"
+          limits:  #максимальные, которое могут понадобится, например при запуске пода.
+            cpu: "0.4"
+            memory: "128Mi"
+        readinessProbe: #Проврека готовности принимать запросы (запуск)
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5     
+        livenessProbe: # Проверка живучести. Есть ли ответы на запросы (в работе)
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: testapp-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: testapp-deployment
+  minReplicas: 2  
+  maxReplicas: 5  #4 реплики требуется для пика 1 в запасе на случай отказа. Раз всего нод 5, распредление подов будет по одному поду на ноду
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        targetAverageUtilization: 80 # Целевая загруженность всех подов в процентах. Если нагрузка по процессору будет расти, будет увеличиваться ( > 80%) количестов реплик и наоборот. 
+        
